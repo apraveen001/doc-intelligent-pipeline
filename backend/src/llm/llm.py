@@ -8,7 +8,7 @@ load_dotenv()
 
 OLLAMA_API_KEY  = os.getenv("OLLAMA_API_KEY")
 OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "https://api.ollama.com")
-LLM_MODEL       = os.getenv("LLM_MODEL", "llama3.2")
+LLM_MODEL       = os.getenv("LLM_MODEL", "minimax-m3:cloud")
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
