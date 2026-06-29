@@ -3,8 +3,15 @@ from fastapi.responses import JSONResponse
 from core import parse_and_chunk, embed_chunks, check_ollama
 from core.vector_store import store_embeddings, query_collection, get_collection
 from core.query_pipeline import run_query
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 app = FastAPI()
+app.mount("/static", StaticFiles(directory="static"), name="static")
+
+@app.get("/")
+async def serve_frontend():
+    return FileResponse("static/index.html")
 
 @app.post("/upload")
 async def upload_pdf(file: UploadFile = File(...)):
