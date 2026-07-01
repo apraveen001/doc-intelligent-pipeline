@@ -20,7 +20,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["backend/core"]
+packages = ["app/src/core"]
 
 [build-system]
 requires = ["hatchling"]
