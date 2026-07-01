@@ -1,3 +1,4 @@
+import traceback
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.responses import JSONResponse
 from core import parse_and_chunk, embed_chunks, check_ollama
@@ -96,7 +97,7 @@ async def list_documents():
 @app.get("/query")
 async def query_documents(
     q: str,
-    n_results: int = 5,
+    n_results: int = 3,
     filename: str | None = None,
 ):
     if not q.strip():
@@ -105,4 +106,5 @@ async def query_documents(
         result = await run_query(q, n_results=n_results, filename=filename)
         return JSONResponse(content=result)
     except Exception as e:
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
