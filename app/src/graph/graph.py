@@ -1,50 +1,64 @@
 """
-DocMind LangGraph Agent Graph
-------------------------------
-Wires the four nodes into a compiled StateGraph:
+DocMind Research Paper Assistant — LangGraph Agent Graph
+---------------------------------------------------------
+Two separate graphs for the two phases of the app:
 
+  PHASE 1 — Research graph (run once per session)
+  ─────────────────────────────────────────────────
     [START]
-      │
-      ▼
-   Planner          — rephrase the query
-      │
-      ▼
-   Retrieval        — embed + fetch top-k chunks
-      │
-      ▼
-   Synthesis        — generate answer from chunks
-      │
-      ▼
-   Validator ──────► END   (if grounded OR max retries reached)
-      │
-      └──────────────► Synthesis  (retry if not grounded, retries remaining)
+       │
+       ▼
+    Planner        — rephrase topic into ArXiv query
+       │
+       ▼
+    Search         — hit ArXiv API, get 10 candidates
+       │
+       ▼
+    Selector       — Gemini picks best 3 papers
+       │
+       ▼
+    Ingestor       — download, chunk, embed, store in ChromaDB
+       │
+       ▼
+     [END]         — frontend shows paper list, chat unlocked
+
+  PHASE 2 — QA graph (run per user question)
+  ───────────────────────────────────────────
+    [START]
+       │
+       ▼
+      QA            — retrieve chunks (session-scoped), generate answer
+       │
+       ▼
+    Validator ─────► END   (grounded OR max retries reached)
+       │
+       └───────────► QA    (retry if not grounded, retries < max)
 
 Usage
 -----
-    from app.src.graph.graph import build_graph, run_graph
-
-    graph = build_graph()
-
-    # Standard (blocking) run
-    result: GraphState = await run_graph(graph, user_query="What is RAG?")
-
-    # Streaming run (yields SSE-ready dicts)
-    async for event in stream_graph(graph, user_query="What is RAG?"):
-        ...
+    from app.src.graph.graph import (
+        build_research_graph,
+        build_qa_graph,
+        run_research_phase,
+        run_qa_phase,
+        stream_research_phase,
+        stream_qa_phase,
+    )
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from typing import AsyncGenerator
 
 from langgraph.graph import END, START, StateGraph
 
 from app.src.graph.nodes import (
+    ingestor_node,
     planner_node,
-    retrieval_node,
-    synthesis_node,
+    qa_node,
+    search_node,
+    selector_node,
     validator_node,
 )
 from app.src.graph.state import GraphState
@@ -53,153 +67,263 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Conditional edge: should we retry Synthesis or terminate?
+# Conditional edges
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _should_retry(state: GraphState) -> str:
-    """
-    After Validator runs, decide the next node.
-
-    Returns "synthesis" to retry, or END to finish.
-    """
+def _abort_on_error(state: GraphState) -> str:
+    """Generic early-exit edge — used after Search and Selector."""
     if state.error:
-        logger.warning("Graph terminating early due to error: %s", state.error)
+        logger.warning("Graph aborting early: %s", state.error)
         return END  # type: ignore[return-value]
+    return "continue"
 
+
+def _after_search(state: GraphState) -> str:
+    if state.error or not state.candidate_papers:
+        return END  # type: ignore[return-value]
+    return "selector"
+
+
+def _after_selector(state: GraphState) -> str:
+    if state.error or not state.selected_papers:
+        return END  # type: ignore[return-value]
+    return "ingestor"
+
+
+def _after_ingestor(state: GraphState) -> str:
+    if state.error or not state.ingestion_complete:
+        return END  # type: ignore[return-value]
+    return END  # type: ignore[return-value]  # research phase always ends here
+
+
+def _after_validator(state: GraphState) -> str:
+    """Retry QA or end the QA phase."""
+    if state.error:
+        return END  # type: ignore[return-value]
     if not state.is_grounded and state.retry_count < state.max_retries:
         logger.info(
-            "Answer not grounded — retrying synthesis (attempt %d/%d).",
+            "Answer not grounded — retrying QA (attempt %d/%d).",
             state.retry_count,
             state.max_retries,
         )
-        return "synthesis"
-
+        return "qa"
     return END  # type: ignore[return-value]
 
 
-def _should_continue_after_retrieval(state: GraphState) -> str:
-    """Abort early if retrieval encountered a fatal error."""
-    if state.error:
-        return END  # type: ignore[return-value]
-    return "synthesis"
-
-
 # ─────────────────────────────────────────────────────────────────────────────
-# Graph factory
+# Graph factories
 # ─────────────────────────────────────────────────────────────────────────────
 
-def build_graph() -> StateGraph:
+def build_research_graph() -> StateGraph:
     """
-    Build and compile the DocMind agent graph.
-
-    Returns a compiled LangGraph StateGraph ready for invocation.
+    Build and compile Phase 1: Planner → Search → Selector → Ingestor.
+    Run once when the user submits a topic.
     """
     builder = StateGraph(GraphState)
 
-    # Register nodes
-    builder.add_node("planner", planner_node)
-    builder.add_node("retrieval", retrieval_node)
-    builder.add_node("synthesis", synthesis_node)
+    builder.add_node("planner",  planner_node)
+    builder.add_node("search",   search_node)
+    builder.add_node("selector", selector_node)
+    builder.add_node("ingestor", ingestor_node)
+
+    builder.add_edge(START, "planner")
+    builder.add_edge("planner", "search")
+
+    builder.add_conditional_edges(
+        "search",
+        _after_search,
+        {"selector": "selector", END: END},
+    )
+    builder.add_conditional_edges(
+        "selector",
+        _after_selector,
+        {"ingestor": "ingestor", END: END},
+    )
+    builder.add_edge("ingestor", END)
+
+    return builder.compile()
+
+
+def build_qa_graph() -> StateGraph:
+    """
+    Build and compile Phase 2: QA → Validator (with retry loop).
+    Run once per user question during the chat session.
+    """
+    builder = StateGraph(GraphState)
+
+    builder.add_node("qa",        qa_node)
     builder.add_node("validator", validator_node)
 
-    # Linear edges
-    builder.add_edge(START, "planner")
-    builder.add_edge("planner", "retrieval")
+    builder.add_edge(START, "qa")
+    builder.add_edge("qa", "validator")
 
-    # Conditional: abort on retrieval error, else synthesise
-    builder.add_conditional_edges(
-        "retrieval",
-        _should_continue_after_retrieval,
-        {"synthesis": "synthesis", END: END},
-    )
-
-    builder.add_edge("synthesis", "validator")
-
-    # Conditional: retry synthesis or end
     builder.add_conditional_edges(
         "validator",
-        _should_retry,
-        {"synthesis": "synthesis", END: END},
+        _after_validator,
+        {"qa": "qa", END: END},
     )
 
     return builder.compile()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Convenience runners
+# Runners — Phase 1 (research)
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def run_graph(graph: StateGraph, user_query: str) -> GraphState:
+async def run_research_phase(
+    graph: StateGraph,
+    session_id: str,
+    user_topic: str,
+) -> GraphState:
     """
-    Run the full graph and return the final state.
+    Run the research phase and return the final state.
 
     Args:
-        graph:      A compiled graph returned by build_graph().
-        user_query: Raw user question.
+        graph:      Compiled research graph from build_research_graph().
+        session_id: UUID for this session (scopes ChromaDB chunks).
+        user_topic: Raw topic the user typed or clicked.
 
     Returns:
-        Final GraphState after all nodes have executed.
+        Final GraphState with ingested_papers and selected_papers populated.
     """
-    initial_state = GraphState(
-        original_query=user_query,
+    initial = GraphState(
+        session_id=session_id,
+        user_topic=user_topic,
         max_retries=2,
     )
-    result = await graph.ainvoke(initial_state)
-    # ainvoke returns a dict; coerce back to GraphState for typed access
+    result = await graph.ainvoke(initial)
     if isinstance(result, dict):
         return GraphState(**result)
     return result
 
 
-async def stream_graph(
+async def stream_research_phase(
     graph: StateGraph,
-    user_query: str,
+    session_id: str,
+    user_topic: str,
 ) -> AsyncGenerator[dict, None]:
     """
-    Stream node-transition events as they happen.
+    Stream research phase node events as SSE-ready dicts.
 
-    Yields dicts compatible with FastAPI's SSE StreamingResponse:
-        {"node": str, "status": str, "detail": str, "timestamp": str}
-
-    The final event carries the complete result:
-        {"node": "done", "status": "completed", "answer": str,
-         "sources": list[str], "is_grounded": bool}
+    Yields:
+        {"type": "node_event", "node": str, "status": str, "detail": str, "timestamp": str}
+        {"type": "done", "papers": list[dict], "error": str | None}  ← final event
     """
-    initial_state = GraphState(
-        original_query=user_query,
+    initial = GraphState(
+        session_id=session_id,
+        user_topic=user_topic,
         max_retries=2,
     )
 
-    seen_events: set[int] = set()  # track by index to avoid re-emitting
+    seen: set[int] = set()
 
-    async for chunk in graph.astream(initial_state, stream_mode="values"):
-        # chunk is the state dict after each node completes
+    async for chunk in graph.astream(initial, stream_mode="values"):
         state = GraphState(**chunk) if isinstance(chunk, dict) else chunk
-
-        # Yield any new node_events appended since last chunk
         for idx, event in enumerate(state.node_events):
-            if idx not in seen_events:
-                seen_events.add(idx)
-                yield event
+            if idx not in seen:
+                seen.add(idx)
+                yield {"type": "node_event", **event}
 
-        # If the graph has terminated (answer is populated), emit a final event
-        if state.answer and state.is_grounded or (
-            state.retry_count >= state.max_retries
-        ):
-            # Will be yielded once on the last chunk — guard with a flag
-            pass
-
-    # After streaming ends, yield the final summary event
-    # Re-invoke to get the complete final state (stream_mode="values" gives
-    # intermediate states; we need the terminal one)
-    final = await run_graph(graph, user_query)
+    # Final event — paper list for the frontend to render
+    final = await run_research_phase(graph, session_id, user_topic)
     yield {
-        "node": "done",
-        "status": "completed",
-        "answer": final.answer,
-        "sources": final.answer_sources,
-        "is_grounded": final.is_grounded,
-        "validation_reasoning": final.validation_reasoning,
-        "retry_count": final.retry_count,
+        "type": "done",
+        "papers": [
+            {
+                "arxiv_id":     p.arxiv_id,
+                "title":        p.title,
+                "authors":      p.authors,
+                "abstract":     p.abstract,
+                "published":    p.published,
+                "chunks_stored": p.chunks_stored,
+                "status":       p.status,
+            }
+            for p in final.ingested_papers
+        ],
         "error": final.error,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Runners — Phase 2 (QA)
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def run_qa_phase(
+    graph: StateGraph,
+    current_state: GraphState,
+    user_question: str,
+) -> GraphState:
+    """
+    Run one QA turn and return the updated state.
+
+    Args:
+        graph:          Compiled QA graph from build_qa_graph().
+        current_state:  The live GraphState carrying session_id,
+                        conversation_history, etc.
+        user_question:  The user's current question.
+
+    Returns:
+        Updated GraphState with new answer, sources, and conversation_history.
+    """
+    # Inject the new question and reset per-turn validator fields
+    turn_state = current_state.model_copy(update={
+        "user_question": user_question,
+        "retrieved_chunks": [],
+        "answer": "",
+        "answer_sources": [],
+        "is_grounded": False,
+        "validation_reasoning": "",
+        "retry_count": 0,
+        "error": None,
+    })
+
+    result = await graph.ainvoke(turn_state)
+    if isinstance(result, dict):
+        return GraphState(**result)
+    return result
+
+
+async def stream_qa_phase(
+    graph: StateGraph,
+    current_state: GraphState,
+    user_question: str,
+) -> AsyncGenerator[dict, None]:
+    """
+    Stream one QA turn as SSE-ready dicts.
+
+    Yields:
+        {"type": "node_event", "node": str, "status": str, "detail": str, "timestamp": str}
+        {"type": "done", "answer": str, "sources": list[str],
+         "is_grounded": bool, "error": str | None}  ← final event
+    """
+    turn_state = current_state.model_copy(update={
+        "user_question": user_question,
+        "retrieved_chunks": [],
+        "answer": "",
+        "answer_sources": [],
+        "is_grounded": False,
+        "validation_reasoning": "",
+        "retry_count": 0,
+        "error": None,
+    })
+
+    seen: set[int] = set()
+    base_event_count = len(current_state.node_events)
+
+    async for chunk in graph.astream(turn_state, stream_mode="values"):
+        state = GraphState(**chunk) if isinstance(chunk, dict) else chunk
+        for idx, event in enumerate(state.node_events):
+            # Only yield events added during this QA turn
+            if idx >= base_event_count and idx not in seen:
+                seen.add(idx)
+                yield {"type": "node_event", **event}
+
+    # Final event — answer for the frontend
+    final = await run_qa_phase(graph, current_state, user_question)
+    yield {
+        "type": "done",
+        "answer":       final.answer,
+        "sources":      final.answer_sources,
+        "is_grounded":  final.is_grounded,
+        "error":        final.error,
     }

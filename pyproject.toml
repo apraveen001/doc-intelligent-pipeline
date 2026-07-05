@@ -10,7 +10,11 @@ dependencies = [
     "pdfplumber",
     "httpx",
     "chromadb",
-    "python-dotenv"
+    "python-dotenv",
+    "langgraph>=0.2.0",
+    "langchain-core>=0.3.0",
+    "google-generativeai>=0.8.0",
+    "fpdf2",
 ]
 
 [project.optional-dependencies]

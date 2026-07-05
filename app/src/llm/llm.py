@@ -1,70 +1,44 @@
 """
 DocMind — LLM utility
----------------------
-Standalone Gemini wrapper for any LLM call outside the LangGraph nodes.
-The graph nodes call Gemini directly — this module is a convenience utility
-for simple one-off generation calls (e.g. future features, tests, CLI tools).
-
-Config via .env:
-    GEMINI_API_KEY   — required
-    LLM_MODEL        — optional, defaults to gemini-2.0-flash
+Gemini via Vertex AI + Application Default Credentials (ADC).
 """
 
 import os
-
-import google.generativeai as genai
 from dotenv import load_dotenv
+from google import genai
+from google.genai import types
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-LLM_MODEL      = os.getenv("LLM_MODEL", "gemini-2.0-flash")
+client = genai.Client(
+    vertexai=True,
+    project=os.getenv("GCP_PROJECT"),
+    location=os.getenv("GCP_LOCATION", "us-central1"),
+)
+LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.0-flash")
 
-if not GEMINI_API_KEY:
-    raise EnvironmentError("GEMINI_API_KEY is not set in your .env file.")
+SYSTEM_PROMPT = """You are DocMind, an intelligent research paper assistant with a focused and scholarly persona.
 
-genai.configure(api_key=GEMINI_API_KEY)
+Your sole purpose is to help users understand ingested research papers. Answer ONLY from the provided context chunks. Never use outside knowledge or general facts. If a question is out of scope, respond:
+"That question is outside the scope of the ingested research papers. I can only answer questions based on the papers in this session."
 
-# ── System prompt ─────────────────────────────────────────────────────────────
+Always cite sources inline using [source: <paper title>]. Be precise, clear, and academically grounded."""
 
-SYSTEM_PROMPT = """You are DocMind, a precise research paper assistant.
-Answer the user's questions based strictly on the provided context from research papers.
-
-Rules:
-- Only use information from the context provided.
-- If the answer is not in the context, say "I couldn't find relevant information in the ingested papers."
-- Cite sources inline using [source: <paper title>].
-- Be concise, clear, and technically accurate.
-- Do not hallucinate facts not present in the context.
-"""
-
-# ── LLM call ──────────────────────────────────────────────────────────────────
 
 async def generate_response(query: str, chunks: list[dict]) -> str:
-    """
-    Standalone Gemini call — takes a query and retrieved chunks,
-    returns a grounded answer string.
-
-    Args:
-        query:  User question.
-        chunks: List of dicts with keys: text, source, score (optional).
-
-    Returns:
-        Generated answer as a string.
-    """
     context = "\n\n---\n\n".join(
         f"[source: {c.get('source', 'unknown')}]\n{c['text']}"
         for c in chunks
     )
+    prompt = f"Context:\n{context}\n\nQuestion: {query}"
 
-    prompt = f"Context from papers:\n{context}\n\nQuestion: {query}"
-
-    model = genai.GenerativeModel(
-        model_name=LLM_MODEL,
-        system_instruction=SYSTEM_PROMPT,
-    )
-    response = await model.generate_content_async(
-        prompt,
-        generation_config={"temperature": 0.2, "max_output_tokens": 1024},
+    response = await client.aio.models.generate_content(
+        model=LLM_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            temperature=0.2,
+            max_output_tokens=1024,
+        ),
     )
     return response.text.strip()

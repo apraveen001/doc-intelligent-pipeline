@@ -35,7 +35,7 @@ from app.src.core.vector_store import get_collection
 logger = logging.getLogger(__name__)
 
 # ── ArXiv API config ──────────────────────────────────────────────────────────
-ARXIV_API_BASE = "http://export.arxiv.org/api/query"
+ARXIV_API_BASE = "https://export.arxiv.org/api/query"
 ARXIV_NAMESPACE = "{http://www.w3.org/2005/Atom}"
 MAX_CANDIDATE_RESULTS = 10   # fetch this many, Gemini picks best 3
 MAX_PAPERS_TO_INGEST = 3
@@ -72,7 +72,7 @@ async def search_papers(
         }
     """
     params = {
-        "search_query": f"all:{urllib.parse.quote(query)}",
+        "search_query": f"all:{query}",
         "start": 0,
         "max_results": max_results,
         "sortBy": "submittedDate",

@@ -1,20 +1,20 @@
-"""
-DocMind LangGraph agent graph package.
-
-Public API:
-    build_graph()   → compiled StateGraph
-    run_graph()     → async, returns final GraphState
-    stream_graph()  → async generator of SSE-ready dicts
-    GraphState      → Pydantic state model
-"""
-
-from app.src.graph.graph import build_graph, run_graph, stream_graph
+from app.src.graph.graph import (
+    build_research_graph,
+    build_qa_graph,
+    run_research_phase,
+    run_qa_phase,
+    stream_research_phase,
+    stream_qa_phase,
+)
 from app.src.graph.state import GraphState, RetrievedChunk
 
 __all__ = [
-    "build_graph",
-    "run_graph",
-    "stream_graph",
+    "build_research_graph",
+    "build_qa_graph",
+    "run_research_phase",
+    "run_qa_phase",
+    "stream_research_phase",
+    "stream_qa_phase",
     "GraphState",
     "RetrievedChunk",
 ]
