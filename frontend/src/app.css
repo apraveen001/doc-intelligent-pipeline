@@ -1,0 +1,234 @@
+.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.app__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-5) var(--space-7);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.app__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.app__brand-mark {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.app__brand-name {
+  font-size: var(--text-md);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.app__header-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.app__session-id {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+
+.app__main {
+  flex: 1;
+  padding: var(--space-7);
+  display: flex;
+  flex-direction: column;
+}
+
+.app__section {
+  width: 100%;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.app__section--centered {
+  align-items: center;
+  justify-content: center;
+}
+
+.app__section--workspace {
+  max-width: 1200px;
+  margin: 0 auto;
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(280px, 380px) 1fr;
+  gap: var(--space-7);
+  align-items: start;
+}
+
+.app__section-title {
+  font-size: var(--text-lg);
+  color: var(--text-primary);
+  margin-bottom: var(--space-4);
+  font-weight: 600;
+}
+
+.app__papers {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.app__papers .paper-cards {
+  grid-template-columns: 1fr;
+}
+
+.app__chat {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: transparent;
+}
+
+.app__research-progress {
+  width: 100%;
+  max-width: 560px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  animation: fade-in var(--duration-slow) var(--ease-standard);
+}
+
+.app__research-topic {
+  text-align: center;
+  color: var(--text-secondary);
+  font-size: var(--text-base);
+}
+
+.app__banner {
+  max-width: 720px;
+  margin: 0 auto var(--space-5);
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+}
+
+.app__banner--error {
+  background: var(--danger-bg);
+  border: 1px solid rgba(224, 104, 122, 0.3);
+  color: var(--danger);
+}
+
+.app__banner-dismiss {
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: var(--text-md);
+  line-height: 1;
+  opacity: 0.7;
+}
+
+.app__banner-dismiss:hover {
+  opacity: 1;
+}
+
+.app__ended {
+  max-width: 440px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  align-items: center;
+  animation: fade-in var(--duration-slow) var(--ease-standard);
+}
+
+.app__ended-title {
+  font-size: var(--text-xl);
+}
+
+.app__ended-body {
+  color: var(--text-secondary);
+}
+
+.app__ended-restart {
+  margin-top: var(--space-2);
+  background: var(--accent);
+  color: #ffffff;
+  border: none;
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-6);
+  font-size: var(--text-base);
+  font-weight: 500;
+  transition: background var(--duration-base) var(--ease-standard);
+}
+
+.app__ended-restart:hover {
+  background: #7a72ff;
+}
+
+.app__footer {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-4) var(--space-7) var(--space-6);
+}
+
+.app__end-session {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.app__end-session:hover {
+  color: var(--text-secondary);
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (max-width: 900px) {
+  .app__section--workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .app__header {
+    padding: var(--space-4) var(--space-5);
+  }
+
+  .app__main {
+    padding: var(--space-5);
+  }
+}
+
+@media (max-width: 640px) {
+  .app__header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-3);
+  }
+
+  .app__header-actions {
+    width: 100%;
+    justify-content: space-between;
+  }
+}

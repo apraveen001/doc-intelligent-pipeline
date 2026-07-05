@@ -1,0 +1,140 @@
+.status-panel {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  animation: fade-in var(--duration-slow) var(--ease-standard);
+}
+
+.status-panel__title {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: var(--space-4);
+}
+
+.status-panel__timeline {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.status-item {
+  display: flex;
+  gap: var(--space-3);
+  position: relative;
+  padding-bottom: var(--space-4);
+  animation: fade-in var(--duration-base) var(--ease-standard);
+}
+
+.status-item:last-child {
+  padding-bottom: 0;
+}
+
+.status-item::before {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: 22px;
+  bottom: 0;
+  width: 1px;
+  background: var(--border-subtle);
+}
+
+.status-item:last-child::before {
+  display: none;
+}
+
+.status-item__marker {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-surface-raised);
+  border: 1px solid var(--border-subtle);
+  z-index: 1;
+}
+
+.status-item__glyph {
+  font-size: 9px;
+  line-height: 1;
+  color: var(--text-muted);
+}
+
+.status-item.is-active .status-item__marker {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+
+.status-item.is-active .status-item__glyph {
+  color: var(--accent);
+}
+
+.status-item.is-done .status-item__marker {
+  border-color: var(--success);
+  background: var(--success-bg);
+}
+
+.status-item.is-done .status-item__glyph {
+  color: var(--success);
+}
+
+.status-item.is-error .status-item__marker {
+  border-color: var(--danger);
+  background: var(--danger-bg);
+}
+
+.status-item.is-error .status-item__glyph {
+  color: var(--danger);
+}
+
+.status-item__marker--pulse {
+  box-shadow: 0 0 0 0 var(--accent-bg);
+  animation: pulse-ring 1.8s var(--ease-standard) infinite;
+}
+
+.status-item__body {
+  padding-top: 1px;
+}
+
+.status-item__label {
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.status-item__detail {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  margin-top: 2px;
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(108, 99, 255, 0.35);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(108, 99, 255, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(108, 99, 255, 0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
