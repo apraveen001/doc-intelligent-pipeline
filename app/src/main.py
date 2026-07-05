@@ -27,6 +27,7 @@ from pathlib import Path
 STATIC_DIR = Path(__file__).parent / "static"
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -34,6 +35,7 @@ from app.src.graph.graph import (
     build_qa_graph,
     build_research_graph,
     run_qa_phase,
+    run_research_phase,
     stream_qa_phase,
     stream_research_phase,
 )
@@ -44,57 +46,40 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# App lifecycle — build graphs once at startup
-# ─────────────────────────────────────────────────────────────────────────────
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Building LangGraph graphs...")
     app.state.research_graph = build_research_graph()
     app.state.qa_graph       = build_qa_graph()
-
-    # In-memory session store: session_id → GraphState
-    # Holds live state between QA turns for the same session
     app.state.sessions: dict[str, GraphState] = {}
-
     logger.info("DocMind ready.")
     yield
     logger.info("DocMind shutting down.")
 
 
 app = FastAPI(title="DocMind Research Paper Assistant", lifespan=lifespan)
-# app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Frontend
-# ─────────────────────────────────────────────────────────────────────────────
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-# @app.get("/")
-# async def serve_frontend():
-#     return FileResponse(str(STATIC_DIR / "index.html"))
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Health
-# ─────────────────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health():
     return {"status": "ok", "sessions_active": len(app.state.sessions)}
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Session management
-# ─────────────────────────────────────────────────────────────────────────────
-
 @app.post("/session/start")
 async def start_session():
-    """
-    Create a new research session.
-    Returns a session_id the frontend must include in all subsequent requests.
-    """
     session_id = generate_session_id()
     app.state.sessions[session_id] = GraphState(
         session_id=session_id,
@@ -106,16 +91,10 @@ async def start_session():
 
 @app.delete("/session/{session_id}")
 async def end_session(session_id: str):
-    """
-    Clear all ChromaDB chunks for this session and remove it from memory.
-    Called automatically when the user downloads the PDF.
-    """
     if session_id not in app.state.sessions:
         raise HTTPException(status_code=404, detail="Session not found.")
-
     result = await clear_session(session_id)
     app.state.sessions.pop(session_id, None)
-
     logger.info("Session ended: %s — %d chunks deleted.", session_id, result.get("chunks_deleted", 0))
     return JSONResponse(content={
         "message": "Session cleared.",
@@ -124,70 +103,62 @@ async def end_session(session_id: str):
     })
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SSE helper
-# ─────────────────────────────────────────────────────────────────────────────
-
 def _sse(payload: dict) -> str:
-    """Format a dict as an SSE data line."""
     return f"data: {json.dumps(payload)}\n\n"
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Phase 1 — Research stream
-# ─────────────────────────────────────────────────────────────────────────────
 
 @app.get("/research/stream")
 async def research_stream(
     session_id: str = Query(..., description="Session ID from /session/start"),
     topic: str      = Query(..., description="Research topic e.g. 'LLM reasoning'"),
 ):
-    """
-    SSE stream: run the research phase for a topic.
-
-    Events streamed to the frontend:
-        {"type": "node_event", "node": str, "status": str, "detail": str, "timestamp": str}
-        {"type": "done", "papers": list[dict], "error": str | None}
-
-    Frontend connects like:
-        const es = new EventSource(`/research/stream?session_id=...&topic=...`);
-    """
     if session_id not in app.state.sessions:
         raise HTTPException(status_code=404, detail="Session not found. Call /session/start first.")
 
     async def event_generator():
         try:
-            final_state = await run_research_phase(
-                app.state.research_graph,
+            initial = GraphState(
                 session_id=session_id,
                 user_topic=topic,
+                max_retries=2,
             )
 
-            # Stream node events from the final state
-            for event in final_state.node_events:
-                yield _sse({"type": "node_event", **event})
-                await asyncio.sleep(0)
+            seen: set[int] = set()
+            final_state = None
 
-            # Save the full final state so /papers endpoint works
-            app.state.sessions[session_id] = final_state
+            # Stream node events progressively as each node completes
+            async for chunk in app.state.research_graph.astream(
+                initial, stream_mode="values"
+            ):
+                state = GraphState(**chunk) if isinstance(chunk, dict) else chunk
+                final_state = state
 
-            # Emit done event with paper list
-            yield _sse({
-                "type": "done",
-                "papers": [
-                    {
-                        "arxiv_id":      p.arxiv_id,
-                        "title":         p.title,
-                        "authors":       p.authors,
-                        "abstract":      p.abstract,
-                        "published":     p.published,
-                        "chunks_stored": p.chunks_stored,
-                        "status":        p.status,
-                    }
-                    for p in final_state.ingested_papers
-                ],
-                "error": final_state.error,
-            })
+                # Yield any new events added since last chunk
+                for idx, event in enumerate(state.node_events):
+                    if idx not in seen:
+                        seen.add(idx)
+                        yield _sse({"type": "node_event", **event})
+                        await asyncio.sleep(0)
+
+            # Save final state
+            if final_state:
+                app.state.sessions[session_id] = final_state
+                yield _sse({
+                    "type": "done",
+                    "papers": [
+                        {
+                            "arxiv_id":      p.arxiv_id,
+                            "title":         p.title,
+                            "authors":       p.authors,
+                            "abstract":      p.abstract,
+                            "published":     p.published,
+                            "chunks_stored": p.chunks_stored,
+                            "status":        p.status,
+                        }
+                        for p in final_state.ingested_papers
+                    ],
+                    "error": final_state.error,
+                })
 
         except Exception as exc:
             logger.error("Research stream error: %s", exc)
@@ -198,58 +169,64 @@ async def research_stream(
         event_generator(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control":    "no-cache",
+            "Cache-Control":     "no-cache",
             "X-Accel-Buffering": "no",
-            "Connection":       "keep-alive",
+            "Connection":        "keep-alive",
         },
     )
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Phase 2 — QA stream
-# ─────────────────────────────────────────────────────────────────────────────
 
 @app.get("/qa/stream")
 async def qa_stream(
     session_id: str = Query(..., description="Session ID"),
     question: str   = Query(..., description="User question about the papers"),
 ):
-    """
-    SSE stream: run one QA turn against the ingested papers.
-
-    Events streamed:
-        {"type": "node_event", "node": str, "status": str, "detail": str, "timestamp": str}
-        {"type": "done", "answer": str, "sources": list[str],
-         "is_grounded": bool, "error": str | None}
-
-    The session state is updated after each turn so conversation_history
-    carries forward into the next question.
-    """
     if session_id not in app.state.sessions:
         raise HTTPException(status_code=404, detail="Session not found.")
 
     current_state = app.state.sessions[session_id]
 
     async def event_generator():
-        nonlocal current_state
         try:
-            async for event in stream_qa_phase(
-                app.state.qa_graph,
-                current_state=current_state,
-                user_question=question,
-            ):
-                yield _sse(event)
-                await asyncio.sleep(0)
+            # Build the turn state — reset per-question fields
+            turn_state = current_state.model_copy(update={
+                "user_question": question,
+                "retrieved_chunks": [],
+                "answer": "",
+                "answer_sources": [],
+                "is_grounded": False,
+                "validation_reasoning": "",
+                "retry_count": 0,
+                "error": None,
+            })
 
-            # After streaming, run once more to get the updated state
-            # (stream_qa_phase streams events but doesn't return final state)
-            updated = await run_qa_phase(
-                app.state.qa_graph,
-                current_state=current_state,
-                user_question=question,
-            )
-            # Persist updated state (includes new conversation_history turn)
-            app.state.sessions[session_id] = updated
+            seen: set[int] = set()
+            base_count = len(current_state.node_events)
+            final_state = None
+
+            # Stream node events progressively as each node completes
+            async for chunk in app.state.qa_graph.astream(
+                turn_state, stream_mode="values"
+            ):
+                state = GraphState(**chunk) if isinstance(chunk, dict) else chunk
+                final_state = state
+
+                for idx, event in enumerate(state.node_events):
+                    if idx >= base_count and idx not in seen:
+                        seen.add(idx)
+                        yield _sse({"type": "node_event", **event})
+                        await asyncio.sleep(0)
+
+            # Persist final state so conversation_history accumulates
+            if final_state:
+                app.state.sessions[session_id] = final_state
+                yield _sse({
+                    "type":        "done",
+                    "answer":      final_state.answer,
+                    "sources":     final_state.answer_sources,
+                    "is_grounded": final_state.is_grounded,
+                    "error":       final_state.error,
+                })
 
         except Exception as exc:
             logger.error("QA stream error: %s", exc)
@@ -260,58 +237,35 @@ async def qa_stream(
         event_generator(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control":    "no-cache",
+            "Cache-Control":     "no-cache",
             "X-Accel-Buffering": "no",
-            "Connection":       "keep-alive",
+            "Connection":        "keep-alive",
         },
     )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# Session info
-# ─────────────────────────────────────────────────────────────────────────────
-
 @app.get("/session/{session_id}/papers")
 async def list_session_papers(session_id: str):
-    """
-    Return the list of papers ingested for this session.
-    Used by the frontend to render the paper cards.
-    """
     if session_id not in app.state.sessions:
         raise HTTPException(status_code=404, detail="Session not found.")
-
     state = app.state.sessions[session_id]
     papers = [
         {
-            "arxiv_id":     p.arxiv_id,
-            "title":        p.title,
-            "authors":      p.authors,
-            "abstract":     p.abstract,
-            "published":    p.published,
+            "arxiv_id":      p.arxiv_id,
+            "title":         p.title,
+            "authors":       p.authors,
+            "abstract":      p.abstract,
+            "published":     p.published,
             "chunks_stored": p.chunks_stored,
-            "status":       p.status,
+            "status":        p.status,
         }
         for p in state.ingested_papers
     ]
     return JSONResponse(content={"session_id": session_id, "papers": papers})
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# PDF export
-# ─────────────────────────────────────────────────────────────────────────────
-
 @app.get("/session/{session_id}/export")
 async def export_conversation(session_id: str):
-    """
-    Export the full conversation as a PDF and end the session.
-
-    Flow:
-        1. Build PDF from conversation_history
-        2. Stream PDF to client
-        3. Clear session from ChromaDB and memory
-
-    After this endpoint is called, the session is gone.
-    """
     if session_id not in app.state.sessions:
         raise HTTPException(status_code=404, detail="Session not found.")
 
@@ -327,7 +281,6 @@ async def export_conversation(session_id: str):
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=f"PDF export failed: {exc}")
 
-    # Clear session after building PDF
     await clear_session(session_id)
     app.state.sessions.pop(session_id, None)
     logger.info("Session %s exported and cleared.", session_id)
@@ -343,58 +296,56 @@ async def export_conversation(session_id: str):
 
 
 def _sanitize(text: str) -> str:
-    """Replace non-latin-1 characters for fpdf2 compatibility."""
     return (text
-        .replace("\u2014", "-")   # em dash
-        .replace("\u2013", "-")   # en dash
-        .replace("\u2018", "'")   # left single quote
-        .replace("\u2019", "'")   # right single quote
-        .replace("\u201c", '"')   # left double quote
-        .replace("\u201d", '"')   # right double quote
-        .replace("\u2022", "*")   # bullet
+        .replace("\u2014", "-")
+        .replace("\u2013", "-")
+        .replace("\u2018", "'")
+        .replace("\u2019", "'")
+        .replace("\u201c", '"')
+        .replace("\u201d", '"')
+        .replace("\u2022", "*")
         .encode("latin-1", errors="replace").decode("latin-1")
     )
 
 
 def _build_pdf(state: GraphState) -> bytes:
-    """Build a PDF from the conversation history using fpdf2."""
     from fpdf import FPDF
 
     pdf = FPDF()
+    pdf.set_margins(15, 15, 15)
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
-    # Title
+    W = pdf.w - 30  # usable width: page width minus left+right margins
+
     pdf.set_font("Helvetica", "B", 16)
     topic = _sanitize(state.user_topic or "Research Session")
-    pdf.cell(0, 10, f"DocMind - {topic}", ln=True)
+    pdf.cell(W, 10, f"DocMind - {topic}", ln=True)
     pdf.ln(4)
 
-    # Papers section
     if state.ingested_papers:
         pdf.set_font("Helvetica", "B", 12)
-        pdf.cell(0, 8, "Papers Analysed", ln=True)
+        pdf.cell(W, 8, "Papers Analysed", ln=True)
         pdf.set_font("Helvetica", "", 10)
         for p in state.ingested_papers:
             if p.status == "success":
-                pdf.multi_cell(0, 6, _sanitize(f"* {p.title} ({p.published})"))
+                pdf.multi_cell(W, 6, _sanitize(f"* {p.title} ({p.published})"))
         pdf.ln(6)
 
-    # Conversation
     pdf.set_font("Helvetica", "B", 12)
-    pdf.cell(0, 8, "Conversation", ln=True)
+    pdf.cell(W, 8, "Conversation", ln=True)
     pdf.ln(2)
 
     for turn in state.conversation_history:
         if turn.role == "user":
             pdf.set_font("Helvetica", "B", 10)
-            pdf.multi_cell(0, 6, _sanitize(f"You: {turn.content}"))
+            pdf.multi_cell(W, 6, _sanitize(f"You: {turn.content}"))
         else:
             pdf.set_font("Helvetica", "", 10)
-            pdf.multi_cell(0, 6, _sanitize(f"DocMind: {turn.content}"))
+            pdf.multi_cell(W, 6, _sanitize(f"DocMind: {turn.content}"))
             if turn.sources:
                 pdf.set_font("Helvetica", "I", 9)
-                pdf.multi_cell(0, 5, _sanitize("Sources: " + ", ".join(turn.sources)))
+                pdf.multi_cell(W, 5, _sanitize("Sources: " + ", ".join(turn.sources)))
         pdf.ln(3)
 
     return bytes(pdf.output())
