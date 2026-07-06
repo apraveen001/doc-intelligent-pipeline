@@ -19,6 +19,14 @@ pnpm-debug.log*
 .vite
 coverage
 
+# Firebase — local CLI cache and debug logs, not needed by other clones.
+# firebase.json stays committed; .firebaserc is a judgment call (see note).
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+pubsub-debug.log
+
 .DS_Store
 Thumbs.db
 *.suo
