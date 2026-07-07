@@ -1,0 +1,20 @@
+# .dockerignore
+.env
+.env.*
+frontend/
+venv/
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.git/
+.gitignore
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+.DS_Store
+README.md
+LICENSE
+*.pdf
+.vscode/
+.idea/
