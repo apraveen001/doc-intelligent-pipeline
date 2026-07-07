@@ -57,11 +57,20 @@ async def lifespan(app: FastAPI):
     logger.info("DocMind shutting down.")
 
 
-app = FastAPI(title="DocMind Research Paper Assistant", lifespan=lifespan)
+#app = FastAPI(title="DocMind Research Paper Assistant", lifespan=lifespan)
+app = FastAPI(
+    title="DocMind Research Paper Assistant",
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 
 ALLOWED_ORIGINS = [
     "http://localhost:5173",
     "http://127.0.0.1:5173",
+    "https://project-73517f81-3740-4c-77491.web.app",
+    "https://project-73517f81-3740-4c-77491.firebaseapp.com",
 ]
 
 app.add_middleware(
