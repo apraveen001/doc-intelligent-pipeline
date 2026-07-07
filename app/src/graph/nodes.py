@@ -324,7 +324,7 @@ async def qa_node(state: GraphState) -> dict:
     prompt = f"{history_str}Question: {question}\n\nContext:\n{context_str}"
 
     try:
-        full_text   = await _generate(_QA_SYSTEM, prompt, max_tokens=1024, temperature=0.3)
+        full_text   = await _generate(_QA_SYSTEM, prompt, max_tokens=4096, temperature=0.3)
         answer_body = full_text
         sources: list[str] = []
 
