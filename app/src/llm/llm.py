@@ -1,62 +1,44 @@
-import os
-import httpx
-from dotenv import load_dotenv
+"""
+DocMind — LLM utility
+Gemini via Vertex AI + Application Default Credentials (ADC).
+"""
 
-# ── Config ────────────────────────────────────────────────────────────────────
+import os
+from dotenv import load_dotenv
+from google import genai
+from google.genai import types
 
 load_dotenv()
 
-OLLAMA_API_KEY  = os.getenv("OLLAMA_API_KEY")
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "https://api.ollama.com")
-LLM_MODEL       = os.getenv("LLM_MODEL", "minimax-m3:cloud")
+client = genai.Client(
+    vertexai=True,
+    project=os.getenv("GCP_PROJECT"),
+    location=os.getenv("GCP_LOCATION", "us-central1"),
+)
+LLM_MODEL = os.getenv("LLM_MODEL", "gemini-2.0-flash")
 
-# ── System prompt ─────────────────────────────────────────────────────────────
+SYSTEM_PROMPT = """You are DocMind, an intelligent research paper assistant with a focused and scholarly persona.
 
-SYSTEM_PROMPT = """You are an intelligent document assistant.
-Your job is to answer the user's questions based strictly on the provided document context.
+Your sole purpose is to help users understand ingested research papers. Answer ONLY from the provided context chunks. Never use outside knowledge or general facts. If a question is out of scope, respond:
+"That question is outside the scope of the ingested research papers. I can only answer questions based on the papers in this session."
 
-Rules:
-- Only use information from the context provided.
-- If the answer is not in the context, say "I couldn't find relevant information in the uploaded documents."
-- Be concise, clear, and factual.
-- Do not make up information or use outside knowledge.
-- If quoting directly from the document, make it clear.
-"""
+Always cite sources inline using [source: <paper title>]. Be precise, clear, and academically grounded."""
 
-# ── LLM call ──────────────────────────────────────────────────────────────────
 
 async def generate_response(query: str, chunks: list[dict]) -> str:
-    """
-    Takes the user query and retrieved chunks, sends them to the Ollama LLM,
-    and returns the generated answer as a string.
-    """
     context = "\n\n---\n\n".join(
-        f"[Source {c['rank']} | Relevance: {c['score']}]\n{c['text']}"
+        f"[source: {c.get('source', 'unknown')}]\n{c['text']}"
         for c in chunks
     )
+    prompt = f"Context:\n{context}\n\nQuestion: {query}"
 
-    user_message = f"""Context from documents:
-{context}
-
-User question: {query}"""
-
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            f"{OLLAMA_BASE_URL}/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {OLLAMA_API_KEY}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": LLM_MODEL,
-                "messages": [
-                    {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user",   "content": user_message},
-                ],
-                "temperature": 0.2,
-                "max_tokens": 1024,
-            },
-            timeout=60.0,
-        )
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"].strip()
+    response = await client.aio.models.generate_content(
+        model=LLM_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_PROMPT,
+            temperature=0.2,
+            max_output_tokens=1024,
+        ),
+    )
+    return response.text.strip()

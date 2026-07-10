@@ -22,3 +22,9 @@ __pycache__/
 # OS files
 .DS_Store
 Thumbs.db
+
+.firebase/
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+pubsub-debug.log

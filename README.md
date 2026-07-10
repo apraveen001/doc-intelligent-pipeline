@@ -125,6 +125,15 @@ The 50-word overlap between chunks means context isn't lost at boundaries — a 
 
 ---
 
+## Screenshots
+
+**Upload a document**
+![Upload](screenshots/upload.png)
+
+**Ask a question**
+![Query](screenshots/query.png)
+
+
 ## What's next
 
 Things worth adding if you want to take this further:

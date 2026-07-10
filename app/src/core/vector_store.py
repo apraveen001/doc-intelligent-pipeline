@@ -1,8 +1,23 @@
-import os
-from dotenv import load_dotenv
-import chromadb
+"""
+DocMind — Vector store utility
+------------------------------
+ChromaDB Cloud client and collection helpers.
 
-# ── Load environment variables ────────────────────────────────────────────────
+Single collection strategy (free tier compatible):
+    - One collection for all sessions
+    - Every chunk tagged with session_id in metadata
+    - Queries and cleanup filter by session_id
+
+Config via .env:
+    CHROMA_API_KEY
+    CHROMA_TENANT
+    CHROMA_DATABASE
+"""
+
+import os
+
+import chromadb
+from dotenv import load_dotenv
 
 load_dotenv()
 
@@ -28,10 +43,15 @@ client = chromadb.CloudClient(
 
 # ── Collection ────────────────────────────────────────────────────────────────
 
-def get_collection(name: str = "doc-intelligent-pipeline"):
-    """Get or create a ChromaDB collection."""
+COLLECTION_NAME = "docmind-research"
+
+def get_collection():
+    """
+    Get or create the single shared ChromaDB collection.
+    All sessions share this collection — chunks are scoped by session_id metadata.
+    """
     return client.get_or_create_collection(
-        name=name,
+        name=COLLECTION_NAME,
         metadata={"hnsw:space": "cosine"},
     )
 
@@ -40,15 +60,11 @@ def get_collection(name: str = "doc-intelligent-pipeline"):
 
 def store_embeddings(embedded_chunks: list[dict], filename: str) -> int:
     """
-    Store embedded chunks into ChromaDB Cloud.
+    Store embedded chunks into ChromaDB.
+    Kept for backwards compatibility — mcp/tools.py handles ingestion directly.
 
     Expects each chunk to have:
-        {
-            "chunk_index": int,
-            "text": str,
-            "word_count": int,
-            "embedding": list[float],
-        }
+        { "chunk_index": int, "text": str, "word_count": int, "embedding": list[float] }
 
     Returns the number of chunks stored.
     """
@@ -61,7 +77,6 @@ def store_embeddings(embedded_chunks: list[dict], filename: str) -> int:
 
     for chunk in embedded_chunks:
         chunk_id = f"{filename}::chunk_{chunk['chunk_index']}"
-
         ids.append(chunk_id)
         embeddings.append(chunk["embedding"])
         documents.append(chunk["text"])
@@ -86,31 +101,22 @@ def store_embeddings(embedded_chunks: list[dict], filename: str) -> int:
 def query_collection(
     query_embedding: list[float],
     n_results: int = 5,
-    filename: str | None = None,
-) -> list[dict]:
+    session_id: str | None = None,
+) -> dict:
     """
-    Query ChromaDB with a vector and return the top n_results chunks.
+    Query ChromaDB with a vector, optionally filtered by session_id.
+    Returns raw ChromaDB results dict (documents, metadatas, distances, ids).
 
-    Optionally filter by filename to search within a single document.
+    Note: the QA node calls collection.query() directly for session-scoped
+    retrieval. This function is available for any direct query needs.
     """
     collection = get_collection()
 
-    where = {"filename": filename} if filename else None
+    where = {"session_id": session_id} if session_id else None
 
-    results = collection.query(
+    return collection.query(
         query_embeddings=[query_embedding],
         n_results=n_results,
         where=where,
         include=["documents", "metadatas", "distances"],
     )
-
-    output = []
-    for i in range(len(results["ids"][0])):
-        output.append({
-            "chunk_id": results["ids"][0][i],
-            "text":     results["documents"][0][i],
-            "metadata": results["metadatas"][0][i],
-            "distance": results["distances"][0][i],
-        })
-
-    return output

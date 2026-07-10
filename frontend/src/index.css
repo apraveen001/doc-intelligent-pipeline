@@ -1,0 +1,163 @@
+/* -------------------------------------------------------------------------
+   DocMind — design tokens & global resets
+
+   Palette: deep dark neutrals with a single desaturated indigo accent.
+   Type: Inter for UI text, IBM Plex Mono for metadata/IDs/timestamps.
+   ------------------------------------------------------------------------- */
+
+:root {
+  /* Surfaces */
+  --bg-base: #0f0f13;
+  --bg-surface: #1a1a24;
+  --bg-surface-raised: #20202c;
+  --bg-surface-hover: #24242f;
+  --border-subtle: #2a2a38;
+  --border-strong: #35354a;
+
+  /* Text */
+  --text-primary: #e8e8ec;
+  --text-secondary: #a3a3b2;
+  --text-muted: #6c6c7d;
+
+  /* Accent — soft indigo */
+  --accent: #6c63ff;
+  --accent-dim: #4d47b8;
+  --accent-bg: rgba(108, 99, 255, 0.1);
+  --accent-border: rgba(108, 99, 255, 0.35);
+
+  /* Status */
+  --success: #4ecdc4;
+  --success-bg: rgba(78, 205, 196, 0.1);
+  --warning: #e0a458;
+  --warning-bg: rgba(224, 164, 88, 0.1);
+  --danger: #e0687a;
+  --danger-bg: rgba(224, 104, 122, 0.1);
+
+  /* Type */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+
+  /* Scale */
+  --text-xs: 0.75rem;
+  --text-sm: 0.8125rem;
+  --text-base: 0.9375rem;
+  --text-md: 1.0625rem;
+  --text-lg: 1.375rem;
+  --text-xl: 1.75rem;
+  --text-2xl: 2.25rem;
+
+  /* Spacing */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  /* Radii — small and consistent, not rounded-everywhere */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+
+  /* Motion */
+  --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+  --duration-fast: 120ms;
+  --duration-base: 200ms;
+  --duration-slow: 360ms;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  padding: 0;
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  margin: 0;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+p {
+  margin: 0;
+}
+
+button {
+  font-family: inherit;
+  cursor: pointer;
+}
+
+input, textarea, button {
+  font-family: inherit;
+  color: inherit;
+}
+
+a {
+  color: inherit;
+}
+
+code, .mono {
+  font-family: var(--font-mono);
+}
+
+::selection {
+  background: var(--accent-bg);
+  color: var(--text-primary);
+}
+
+/* Scrollbars — quiet, not the browser default chrome */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+  border: 2px solid var(--bg-base);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}
+
+/* Visible keyboard focus everywhere — no focus:outline-none anywhere */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
